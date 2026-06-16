@@ -1,4 +1,3 @@
-import os
 import re
 import requests
 from urllib.parse import urlparse, urljoin, parse_qs, unquote
@@ -29,7 +28,7 @@ def scrape_game_url_from_page(page_url: str) -> str:
 
     iframe = soup.find("iframe")
     if not iframe or not iframe.get("src"):
-        raise ValueError("Could not find an iframe on the page. Make sure the URL is a valid Truffled game page.")
+        raise ValueError("Could not find an iframe on the page.")
 
     src = iframe["src"]
     return extract_game_url(urljoin(BASE, src))
@@ -47,11 +46,37 @@ def resolve_game_url(user_url: str) -> str:
     return scrape_game_url_from_page(user_url)
 
 
-def download_game(game_index_url: str, out_dir: str = "./exported"):
+def get_game_name(game_index_url: str) -> str:
+    # Try to get name from the page title
+    try:
+        resp = requests.get(game_index_url, timeout=10)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        title = soup.find("title")
+        if title and title.text.strip():
+            name = title.text.strip()
+            name = re.sub(r'[\\/*?:"<>|]', "", name)
+            name = name.strip().lower().replace(" ", "_")
+            return name
+    except Exception:
+        pass
+
+    # Fall back to the folder name in the URL path
+    parts = [p for p in urlparse(game_index_url).path.split("/") if p]
+    for part in reversed(parts):
+        if part != "index.html":
+            return part.lower()
+
+    return "unknown_game"
+
+
+def download_game(game_index_url: str, out_base: str = "./exported"):
     print(f"[*] Resolved game URL: {game_index_url}")
 
+    game_name = get_game_name(game_index_url)
+    print(f"[*] Game name: {game_name}")
+
     base_game_url = game_index_url.rsplit("/", 1)[0] + "/"
-    out_path = Path(out_dir)
+    out_path = Path(out_base) / game_name
     out_path.mkdir(parents=True, exist_ok=True)
 
     visited = set()
@@ -67,7 +92,7 @@ def download_game(game_index_url: str, out_dir: str = "./exported"):
         visited.add(url)
 
         try:
-            resp = requests.get(url, timeout=15)
+            resp = requests.get(url, timeout=60)
             resp.raise_for_status()
         except Exception as e:
             print(f"  [!] Failed to fetch {url}: {e}")
@@ -87,9 +112,19 @@ def download_game(game_index_url: str, out_dir: str = "./exported"):
                 if full.startswith(BASE):
                     assets.append((full, url_to_local_path(full)))
 
-        for match in re.findall(r'["\']([^"\']+\.(?:wasm|data|ogg|mp3|wav|png|jpg|jpeg|gif|svg|ttf|woff2?|json|lua|lovejs|love))["\']', text):
+        for match in re.findall(
+            r'["\`\']([\w./\-]+\.(?:wasm|data|ogg|mp3|wav|png|jpg|jpeg|gif|svg|ttf|woff2?|json|lua|lovejs|love))["\`\']',
+            text
+        ):
             if not match.startswith(("http", "data:", "#")):
                 full = urljoin(base_url, match.split("?")[0])
+                if full.startswith(BASE):
+                    assets.append((full, url_to_local_path(full)))
+
+        for match in re.findall(r'["\']([^"\']*game\.[a-z0-9]+)["\']', text):
+            clean = match.split("?")[0]
+            if not clean.startswith(("http", "data:", "#")):
+                full = urljoin(base_url, clean)
                 if full.startswith(BASE):
                     assets.append((full, url_to_local_path(full)))
 
@@ -133,12 +168,19 @@ def download_game(game_index_url: str, out_dir: str = "./exported"):
     for js_file in out_path.rglob("*.js"):
         try:
             text = js_file.read_text(encoding="utf-8", errors="ignore")
-            patched = re.sub(r'(\.(data|wasm|ogg|mp3|wav|png|jpg|json|love))\?[^"\'&\s]+', r'\1', text)
+            patched = re.sub(r'(\.(data|wasm|ogg|mp3|wav|png|jpg|json|love|css))\?[^"\'&\s]+', r'\1', text)
             if patched != text:
                 js_file.write_text(patched, encoding="utf-8")
                 print(f"  [~] Patched cache busters in {js_file.relative_to(out_path)}")
         except Exception:
             pass
+
+    for fname in ["game.data", "game.wasm"]:
+        explicit_url = base_game_url + fname
+        explicit_path = out_path / fname
+        if not explicit_path.exists():
+            print(f"[*] Explicitly trying {fname}...")
+            fetch_and_save(explicit_url, explicit_path)
 
     print(f"\n[✓] Game downloaded to: {out_path.resolve()}")
 
