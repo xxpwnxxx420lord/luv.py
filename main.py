@@ -1,5 +1,5 @@
 from utilities.fs import view
-from download_truffled import run
+from downloader import run
 
 print(view('./assets/intromessage.txt')) # Loads intro message kinda self explanatory
 

@@ -20,5 +20,6 @@
   ┌─────────────────────────────┐
   │      SUPPORTED WEBSITES     │
   ├─────────────────────────────┤
-  │  truffled  ~  truffled.lol  │
+  │  truffled  ~  truffled.lol  |
+  │  azgames ~ azgames.io       |
   └─────────────────────────────┘
